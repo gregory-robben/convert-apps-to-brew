@@ -1,51 +1,32 @@
 # Convert macOS Applications to Homebrew Installations
 
-This script examines your applications located in the `/Applications` directory, checks if corresponding Homebrew packages (cask or formula) exist, and, if so, removes the locally installed copy and installs it via Homebrew. This allows you to manage more of your applications using Homebrew, simplifying updates and maintenance.
+This script examines your applications located in the `/Applications` directory, checks if corresponding Homebrew packages (cask or formula) exist, and, if so, removes the locally installed copy and installs it via Homebrew. This allows you to manage more of your applications using Homebrew, simplifying updates and maintenance. Apps are backed up before replacement and automatically restored if installation fails.
 
 ---
 
 ## Table of Contents
 
-- [How It Works](#how-it-works)
-  - [App Discovery](#app-discovery)
-  - [Homebrew Check](#homebrew-check)
-  - [Uninstall & Install](#uninstall--install)
-  - [Grouped Operations](#grouped-operations)
-
-- [Why Use It](#why-use-it)
-- [Prerequisites](#prerequisites)
-- [Installation](#installation)
-- [Usage](#usage)
-- [Example Output](#example-output)
-- [Troubleshooting](#troubleshooting)
-- [License](#license)
+- [Convert macOS Applications to Homebrew Installations](#convert-macos-applications-to-homebrew-installations)
+  - [Table of Contents](#table-of-contents)
+  - [How It Works](#how-it-works)
+  - [Why Use It](#why-use-it)
+  - [Prerequisites](#prerequisites)
+  - [Installation](#installation)
+  - [Usage](#usage)
+    - [Aliases](#aliases)
+  - [Example Output](#example-output)
+  - [Troubleshooting](#troubleshooting)
+  - [License](#license)
 
 ---
 
 ## How It Works
 
-### App Discovery
+1. **Scan**: The script searches `/Applications` for `.app` directories and checks if matching Homebrew packages exist (cask or formula).
+2. **Review**: Candidates are written to a Brewfile you can edit to exclude apps.
+3. **Convert**: Each app is backed up, then replaced with the Homebrew version. On failure, the original is automatically restored.
 
-- The script searches for all `.app` directories in `/Applications`.
-- For each app, it normalizes the application name by converting it to lowercase and replacing spaces with hyphens (e.g., `Visual Studio Code` → `visual-studio-code`).
-
-### Homebrew Check
-
-- If an app matches a Homebrew package (either via `brew info --cask` or `brew info`), it will be scheduled for installation.
-- If the app is already installed via Homebrew, it’s skipped.
-- If no matching Homebrew package is found, the app is marked as “unable to install via Homebrew.”
-
-### Uninstall & Install
-
-- For any application found to have a matching cask, the script removes the existing `.app` from `/Applications` using `sudo` to bypass permission issues.
-- It then installs that application via `brew install --cask`.
-- For formula-based packages, the same logic applies but uses `brew install` without the `--cask` flag.
-
-### Grouped Operations
-
-- Cask packages are installed in a single grouped operation.
-- Formula packages are installed together in another grouped operation.
-- All deletions happen in one `sudo rm -rf` command before the installations begin, minimizing multiple password prompts.
+Apps already installed via Homebrew are skipped. Apps without a matching package are reported but ignored.
 
 ---
 
@@ -67,12 +48,14 @@ This script examines your applications located in the `/Applications` directory,
 ## Installation
 
 1. **Clone or Download** this repository:
+
    ```bash
    git clone https://github.com/oturcot/convert-apps-to-brew.git
    cd convert-apps-to-brew
    ```
 
 2. **Make the Script Executable**:
+
    ```bash
    chmod +x convert-apps-to-brew.sh
    ```
@@ -81,55 +64,84 @@ This script examines your applications located in the `/Applications` directory,
 
 ## Usage
 
-1. **Run the Script**:
+```bash
+./convert-apps-to-brew.sh [OPTIONS]
+```
+
+**Options:**
+
+- `--scan` — Scan for convertible apps and generate a candidates Brewfile (no changes made)
+- `--candidates FILE` — Use a custom candidates file path
+- `--help` — Show help message
+
+**Recommended workflow:**
+
+1. **Scan** to generate a candidates file:
+
+   ```bash
+   ./convert-apps-to-brew.sh --scan
+   ```
+
+2. **Edit** the candidates file (`~/.config/convert-apps-to-brew/Brewfile.candidates`) to comment out any apps you don't want to convert:
+
+   ```
+   cask "visual-studio-code"  # Visual Studio Code
+   # cask "slack"  # Slack  <- commented out, will be skipped
+   ```
+
+3. **Run** without arguments to perform the conversion:
+
    ```bash
    ./convert-apps-to-brew.sh
    ```
-   - You may be prompted for your password once if the script needs elevated permissions to remove any App Store–installed apps or other restricted applications.
 
-2. **What Happens Next**:
-   - The script displays which apps are scheduled for conversion, which are already installed via Homebrew, and which cannot be installed via Homebrew.
-   - It removes the scheduled apps from `/Applications` (using `sudo`) and installs them using brew.
+Apps are backed up to `~/.app-conversion-backup/` before replacement. If installation fails, the original app is automatically restored.
 
-3. **Review the Summary**:
-   - At the end, you’ll see a summary of which apps were successfully installed via Homebrew, which were already installed, and which could not be installed.
+### Aliases
+
+Some apps have different names in Homebrew (e.g., `logioptionsplus` → `logi-options+`). Create an aliases file to map app names to their Homebrew package names:
+
+**File:** `~/.config/convert-apps-to-brew/aliases.conf`
+
+```
+# Format: AppName=brew-package-name
+logioptionsplus=logi-options+
+BambuStudio=bambu-studio
+zoom.us=zoom
+```
+
+The script will use these aliases during scanning to find the correct packages.
 
 ---
 
 ## Example Output
 
 ```
-Scheduled 'Visual Studio Code' (brew package: visual-studio-code) for cask installation.
+Running in SCAN mode...
+Found candidate: 'Visual Studio Code' (brew package: visual-studio-code) - cask
 Application 'Steam Link' is not available via Homebrew.
 Application 'Docker' is already installed via Homebrew.
 
-Deleting existing applications for cask installations...
-Deleting: /Applications/Visual Studio Code.app
+Candidates Brewfile written to: ~/.config/convert-apps-to-brew/Brewfile.candidates
 
-Installing casks: visual-studio-code
-==> Downloading ...
-==> Installing Cask visual-studio-code
-...
-==> Success!
+==========================================
+Summary of Operations
+==========================================
 
-Summary of Operations:
-Applications already installed via Homebrew:
-Docker
+Applications already installed via Homebrew (1):
+  - Docker
 
-Applications installed via Homebrew:
-visual-studio-code
-
-Applications that failed to install via Homebrew:
-Steam Link
+Not available via Homebrew (1):
+  - Steam Link
 ```
 
 ---
 
 ## Troubleshooting
 
-- **Permission Denied**: If you see permission issues, ensure your user is an administrator and that `sudo` is configured properly.
-- **Name Mismatches**: Some apps have different naming conventions on Homebrew. If an application can’t be found, you may need to manually rename it or install a different cask/formula name.
-- **Already Installed Errors**: If the installation fails due to “App already exists,” the script might not have been able to delete the existing `.app`. Try running with administrator privileges, or manually remove the offending `.app` and re-run.
+- **Permission Denied**: Ensure your user is an administrator and that `sudo` is configured properly.
+- **Name Mismatches**: Some apps have different names in Homebrew. Add an alias to `~/.config/convert-apps-to-brew/aliases.conf` (see [Aliases](#aliases)).
+- **Failed Installation**: The script automatically restores the original app from backup. Check the error message and try installing manually with `brew install --cask <package>`.
 
 ---
 
