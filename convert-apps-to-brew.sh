@@ -8,11 +8,15 @@ MODE="convert"
 CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/convert-apps-to-brew"
 CANDIDATES_FILE="$CONFIG_DIR/Brewfile.candidates"
 ALIASES_FILE="$CONFIG_DIR/aliases.conf"
+EXCLUSIONS_FILE="$CONFIG_DIR/exclusions.conf"
 BACKUP_DIR=""
 
 # Store aliases as parallel arrays (bash 3 compatible)
 ALIAS_APPS=()
 ALIAS_PACKAGES=()
+
+# Store excluded apps
+EXCLUDED_APPS=()
 
 # Initialize arrays for results
 INSTALLED_VIA_BREW=()
@@ -20,6 +24,7 @@ ALREADY_INSTALLED_VIA_BREW=()
 UNABLE_TO_INSTALL=()
 FAILED_TO_INSTALL=()
 RESTORED_APPS=()
+SKIPPED_EXCLUDED=()
 
 # Arrays to hold packages scheduled for installation and their corresponding original app names
 CASK_PACKAGES=()
@@ -61,6 +66,18 @@ Aliases:
     logioptionsplus=logi-options+
     BambuStudio=bambu-studio
     zoom.us=zoom
+
+Exclusions:
+  Apps that should never be converted (e.g., corporate-managed apps).
+  Create an exclusions file at:
+    ~/.config/convert-apps-to-brew/exclusions.conf
+
+  Format (one per line, app name without .app extension):
+    Microsoft Outlook
+    Slack
+    Company Portal
+
+  These apps will be skipped during both scan and convert operations.
 
 The script will backup apps before replacing them and restore on failure.
 EOF
@@ -132,6 +149,34 @@ load_aliases() {
     done < "$ALIASES_FILE"
     echo "Loaded ${#ALIAS_APPS[@]} alias(es)."
   fi
+}
+
+# Load excluded apps from config file
+load_exclusions() {
+  if [ -f "$EXCLUSIONS_FILE" ]; then
+    echo "Loading exclusions from: $EXCLUSIONS_FILE"
+    while IFS= read -r app_name || [ -n "$app_name" ]; do
+      # Skip empty lines and comments
+      [[ -z "$app_name" || "$app_name" =~ ^[[:space:]]*# ]] && continue
+      # Trim whitespace
+      app_name=$(echo "$app_name" | xargs)
+      if [ -n "$app_name" ]; then
+        EXCLUDED_APPS+=("$app_name")
+      fi
+    done < "$EXCLUSIONS_FILE"
+    echo "Loaded ${#EXCLUDED_APPS[@]} exclusion(s)."
+  fi
+}
+
+# Check if an app is in the exclusions list
+is_excluded() {
+  local app="$1"
+  for excluded in "${EXCLUDED_APPS[@]}"; do
+    if [ "$excluded" = "$app" ]; then
+      return 0
+    fi
+  done
+  return 1
 }
 
 # Look up alias for an app (returns empty if not found)
@@ -260,6 +305,9 @@ read_candidates_file() {
     exit 1
   fi
   
+  # Load exclusions before reading candidates
+  load_exclusions
+  
   echo "Reading candidates from: $CANDIDATES_FILE"
   
   while IFS= read -r line || [ -n "$line" ]; do
@@ -278,6 +326,14 @@ read_candidates_file() {
       local brew_pkg="${BASH_REMATCH[1]}"
       # If no app name in comment, use the package name
       [ -z "$app_name" ] && app_name="$brew_pkg"
+      
+      # Check exclusions
+      if is_excluded "$app_name"; then
+        echo "Skipping excluded app: '$app_name' ($brew_pkg)"
+        SKIPPED_EXCLUDED+=("$app_name")
+        continue
+      fi
+      
       CASK_PACKAGES+=("$brew_pkg")
       CASK_APPS+=("$app_name")
       echo "Loaded candidate: '$app_name' -> $brew_pkg (cask)"
@@ -285,6 +341,14 @@ read_candidates_file() {
       local brew_pkg="${BASH_REMATCH[1]}"
       # If no app name in comment, use the package name
       [ -z "$app_name" ] && app_name="$brew_pkg"
+      
+      # Check exclusions
+      if is_excluded "$app_name"; then
+        echo "Skipping excluded app: '$app_name' ($brew_pkg)"
+        SKIPPED_EXCLUDED+=("$app_name")
+        continue
+      fi
+      
       FORMULA_PACKAGES+=("$brew_pkg")
       FORMULA_APPS+=("$app_name")
       echo "Loaded candidate: '$app_name' -> $brew_pkg (formula)"
@@ -296,8 +360,9 @@ read_candidates_file() {
 scan_applications() {
   echo "Scanning applications in $APPS_DIR..."
   
-  # Load aliases before scanning
+  # Load aliases and exclusions before scanning
   load_aliases
+  load_exclusions
   
   # Build a list of application names from /Applications using find
   app_list=()
@@ -308,6 +373,13 @@ scan_applications() {
   
   # Process each application: check if available via Homebrew and not already installed
   for app in "${app_list[@]}"; do
+    # Skip excluded apps
+    if is_excluded "$app"; then
+      echo "Skipping excluded app: '$app'"
+      SKIPPED_EXCLUDED+=("$app")
+      continue
+    fi
+    
     brew_name=$(get_brew_name "$app")
     local used_alias=""
     get_alias "$app" > /dev/null && used_alias=" via alias"
@@ -407,6 +479,11 @@ print_summary() {
   echo -e "\n=========================================="
   echo "Summary of Operations"
   echo "=========================================="
+  
+  if [ ${#SKIPPED_EXCLUDED[@]} -gt 0 ]; then
+    echo -e "\nSkipped (excluded) (${#SKIPPED_EXCLUDED[@]}):"
+    printf "  - %s\n" "${SKIPPED_EXCLUDED[@]}"
+  fi
   
   if [ ${#ALREADY_INSTALLED_VIA_BREW[@]} -gt 0 ]; then
     echo -e "\nApplications already installed via Homebrew (${#ALREADY_INSTALLED_VIA_BREW[@]}):"
