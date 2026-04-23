@@ -98,8 +98,10 @@ if [ "$MODE" = "convert" ]; then
   echo "This script requires administrator privileges to move applications."
   sudo -v
   
-  # Keep sudo alive in the background
-  while true; do sudo -n true; sleep 50; kill -0 "$$" || exit; done 2>/dev/null &
+  # Keep sudo alive in the background (refresh every 60 seconds)
+  # Store the PID so we can clean it up later
+  (while kill -0 $$ 2>/dev/null; do sudo -n true; sleep 60; done) &
+  SUDO_KEEPALIVE_PID=$!
 fi
 
 # Check if Homebrew is installed
@@ -479,4 +481,9 @@ else
   install_casks
   install_formulas
   print_summary
+  
+  # Clean up the sudo keepalive process
+  if [ -n "$SUDO_KEEPALIVE_PID" ]; then
+    kill "$SUDO_KEEPALIVE_PID" 2>/dev/null
+  fi
 fi
